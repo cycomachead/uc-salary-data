@@ -4,3 +4,10 @@ csv/*.csv
 
 !json/*.json.gz
 !csv/*.csv.gz
+
+*.db
+*.db.gz
+*.sqlite
+*.sql
+!*.sqlite.gz
+!*.sql.gz
