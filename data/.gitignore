@@ -1,0 +1,6 @@
+# Ignore uncompressed files
+json/*.json
+csv/*.csv
+
+!json/*.json.gz
+!csv/*.csv.gz
