@@ -33,6 +33,7 @@ Definitions
 import argparse
 import csv
 import os
+import textwrap
 
 import matplotlib
 matplotlib.use("Agg")
@@ -47,9 +48,19 @@ FACULTY_HEALTH_NOTE = {
                "(Professor-HCOMP, In Residence, Of Clinical X); HS Clinical and adjunct series are not Senate.",
 }
 
+# See module docstring for the exclusion rule and the full-time estimate.
+FULLTIME_CSV = "data/reference/uc_fulltime_lecturers.csv"   # UCOP headcount dashboard, Full Time filter
+# 2022 lecturer rows that look like retroactive contract payments to people who had
+# already left: paid under $5k in 2022 and absent from the 2023 payroll.
+JUNK_2022 = ("NOT (year = 2022 AND gross_pay < 5000 AND NOT EXISTS ("
+             "SELECT 1 FROM salaries t WHERE t.year = 2023 AND t.first_name = s.first_name "
+             "AND t.last_name = s.last_name AND t.location = s.location))")
+EST_FT = "EST full-time U18 lecturers"
+EST_FT_COLOR = "#1b4aa8"
+
 GROUPS = [
     # label, SQL condition, colour (validated categorical palette), is_faculty
-    ("Lecturers (Unit 18)", f"category = '{T.LECT}'", "#2a78d6", False),
+    ("Lecturers (Unit 18)", f"category = '{T.LECT}' AND {JUNK_2022}", "#2a78d6", False),
     ("Teaching professors", f"category = '{T.SEN}' AND secondary_category LIKE 'Teaching Professor%'", "#eb6834", True),
     ("Senate faculty", f"category = '{T.SEN}' AND secondary_category NOT LIKE 'Teaching Professor%' "
                        "AND secondary_category NOT LIKE 'Recall%' AND secondary_category NOT LIKE 'Emeritus%'", "#1baf7a", True),
@@ -88,8 +99,9 @@ def load_local_cpi():
     return out
 
 
-def fetch(conn, years, locations, clinical_faculty="exclude"):
+def fetch(conn, years, locations, clinical_faculty="exclude", fulltime=None):
     """{location: {group: {'People': {year: n}, 'Pay': {...}, 'PerPerson': {...}}}}"""
+    fulltime = fulltime or {}
     out = {}
     for loc in locations:
         where_loc = "" if loc == UC else "AND location = ?"
@@ -98,14 +110,55 @@ def fetch(conn, years, locations, clinical_faculty="exclude"):
             health = "" if (is_faculty and clinical_faculty == "include") else "AND is_health = 'N'"
             params = (years[0], years[-1]) + (() if loc == UC else (loc,))
             rows = conn.execute(
-                f"SELECT year, COUNT(*), SUM(gross_pay) FROM salaries_categorized "
+                f"SELECT year, COUNT(*), SUM(gross_pay) FROM salaries_categorized s "
                 f"WHERE year BETWEEN ? AND ? {health} AND ({cond}) {where_loc} GROUP BY year",
                 params).fetchall()
             n = {y: a for y, a, b in rows}
             p = {y: b for y, a, b in rows}
             out[loc][name] = {"People": n, "Pay": p,
                               "PerPerson": {y: p[y] / n[y] for y in years if n.get(y)}}
+        if loc in fulltime and all(y in fulltime[loc] for y in years):
+            out[loc][EST_FT] = estimate_fulltime(conn, years, loc, fulltime[loc])
     return out
+
+
+def count_junk_2022(conn, locations):
+    """How many 2022 lecturer rows the JUNK_2022 rule removes, per location."""
+    out = {}
+    for loc in locations:
+        where_loc = "" if loc == UC else "AND location = ?"
+        params = () if loc == UC else (loc,)
+        out[loc] = conn.execute(
+            f"SELECT COUNT(*) FROM salaries_categorized s WHERE year = 2022 AND is_health = 'N' "
+            f"AND category = '{T.LECT}' AND NOT ({JUNK_2022}) {where_loc}", params).fetchone()[0]
+    return out
+
+
+def load_fulltime():
+    """{location: {year: full-time lecturer headcount}} from the UCOP dashboard export."""
+    out = {}
+    if os.path.exists(FULLTIME_CSV):
+        for r in T.read_csv(FULLTIME_CSV):
+            if r["fulltime_lecturers"].strip():   # blank = not yet exported for that campus/year
+                out.setdefault(r["location"], {})[int(r["year"])] = int(r["fulltime_lecturers"])
+    return out
+
+
+def estimate_fulltime(conn, years, loc, headcounts):
+    """Proxy for full-time lecturers: the N highest REGULAR-pay lecturer rows, where N is
+    UCOP's full-time lecturer headcount for that year and location.  Pay is their gross pay."""
+    where_loc = "" if loc == UC else "AND location = ?"
+    n, p, cutoff = {}, {}, {}
+    for y in years:
+        params = (y,) + (() if loc == UC else (loc,))
+        rows = conn.execute(
+            f"SELECT regular_pay, gross_pay FROM salaries_categorized s WHERE year = ? AND is_health = 'N' "
+            f"AND category = '{T.LECT}' AND {JUNK_2022} {where_loc} ORDER BY regular_pay DESC LIMIT {headcounts[y]}",
+            params).fetchall()
+        n[y] = len(rows)
+        p[y] = sum(g for r, g in rows)
+        cutoff[y] = rows[-1][0] if rows else None
+    return {"People": n, "Pay": p, "PerPerson": {y: p[y] / n[y] for y in years if n.get(y)}, "Cutoff": cutoff}
 
 
 def fmt_people(v):
@@ -118,7 +171,7 @@ def fmt_money(v):
 
 PANELS = [("People", "People (payroll rows)", fmt_people),
           ("Pay", "Total gross pay", fmt_money),
-          ("PerPerson", "Pay per person (total pay / people)", fmt_money)]
+          ("PerPerson", "Average gross pay per row (total pay / people)", fmt_money)]
 
 
 def panel_title(loc):
@@ -138,13 +191,17 @@ def draw_panel(ax, groups, years, key, fmt, title, local_cpi=None, fontsize=8.5)
             ax.plot(years, lc, color=LOCAL, lw=1.5, ls=(0, (4, 3)), label="Local inflation (metro CPI-U)")
             ends.append([lc[-1], f"local CPI +{lc[-1] - 100:.0f}%"])
     small = []
-    for name, _, col, _ in GROUPS:
+    series = [(name, col) for name, _, col, _ in GROUPS]
+    if EST_FT in groups:
+        series.append((EST_FT, EST_FT_COLOR))
+    for name, col in series:
         d = groups[name][key]
         if not all(d.get(y) for y in years) or groups[name]["People"][y0] < MIN_BASE:
             small.append(name)
             continue
         idx = [100 * d[y] / d[y0] for y in years]
-        ax.plot(years, idx, color=col, lw=2, solid_joinstyle="round", solid_capstyle="round", label=name)
+        style = dict(ls=(0, (6, 2)), lw=2.2) if name == EST_FT else dict(lw=2)
+        ax.plot(years, idx, color=col, solid_joinstyle="round", solid_capstyle="round", label=name, **style)
         ax.plot(years[-1], idx[-1], "o", ms=7, color=col, mec=SURF, mew=2)
         ends.append([idx[-1], f"{fmt(d[y1])} ({idx[-1] - 100:+.0f}%)"])
     if small:
@@ -177,10 +234,13 @@ def draw_panel(ax, groups, years, key, fmt, title, local_cpi=None, fontsize=8.5)
     ax.set_xlim(y0 - 0.2, y1 + 1.0 + 0.25 * (y1 - y0 < 5))
 
 
-def footnote(clinical_faculty, local_cpi, with_asterisk):
+def footnote(clinical_faculty, local_cpi, with_asterisk, junk=None):
     lines = ["Source: ucannualwage.ucop.edu payroll rows, gross pay; categories from data/title_categories.csv. "
              "Admin = SMG + academic administration + staff management; health-care titles excluded. "
-             "End labels: last-year value and change since the start year."]
+             "End labels: the LEVEL in the last year (headcount, $ total, or $ average per row), with % change since the start year in parentheses.",
+             "Lecturers: 2022 rows paid under $5k by people absent from the 2023 payroll are excluded (retroactive contract payments"
+             + (f"; {junk[UC]:,} rows systemwide" if junk and UC in junk else "") + "). "
+             "EST full-time U18 lecturers = the N highest REGULAR-pay lecturer rows, N = UCOP's October full-time lecturer headcount; their gross pay is plotted."]
     if with_asterisk:
         lines.append("* Campus with a medical center: medical-center staff and health-system executives are "
                      "excluded by payroll title (best effort; see docs/title-categories.md).")
@@ -188,7 +248,7 @@ def footnote(clinical_faculty, local_cpi, with_asterisk):
     if with_asterisk:
         lines.append("CA CPI-W (Dept. of Finance) is dashed gray. Local metro CPI-U is dashed purple when "
                      "data/reference/cpi_local.csv has it" + (" (not loaded)." if not local_cpi else "."))
-    return "\n".join(lines)
+    return "\n".join(textwrap.fill(line, 175) for line in lines)
 
 
 def best_legend(axes):
@@ -201,45 +261,47 @@ def best_legend(axes):
     return best
 
 
-def draw_two_locations(data, years, png, clinical_faculty, local_cpis):
+def draw_two_locations(data, years, png, clinical_faculty, local_cpis, junk=None):
     y0 = years[0]
-    fig, axes = plt.subplots(2, 3, figsize=(16, 9.4), facecolor=SURF)
-    fig.subplots_adjust(hspace=0.45, wspace=0.32, left=0.05, right=0.945, top=0.85, bottom=0.13)
+    fig, axes = plt.subplots(2, 3, figsize=(16, 10.6), facecolor=SURF)
+    fig.subplots_adjust(hspace=0.45, wspace=0.32, left=0.05, right=0.945, top=0.81, bottom=0.11)
     for i, (loc, groups) in enumerate(data.items()):
         for j, (key, label, fmt) in enumerate(PANELS):
             draw_panel(axes[i][j], groups, years, key, fmt, f"{panel_title(loc)} - {label}",
                        local_cpis.get(CPI_AREA.get(loc)))
     fig.suptitle(f"Growth since {y0}: lecturers, teaching professors, Senate faculty, admin (excluding health care)",
-                 x=0.05, ha="left", fontsize=13, color=TXT, y=0.965)
-    fig.text(0.05, 0.88, footnote(clinical_faculty, local_cpis, any(l in MED_CENTER_CAMPUSES for l in data)),
+                 x=0.05, ha="left", fontsize=13, color=TXT, y=0.985)
+    fig.text(0.05, 0.855, footnote(clinical_faculty, local_cpis, any(l in MED_CENTER_CAMPUSES for l in data), junk),
              fontsize=8.5, color=TXT2, va="bottom")
     h, l = best_legend(axes)
-    fig.legend(h, l, loc="lower center", ncol=6, frameon=False, fontsize=9.5,
-               bbox_to_anchor=(0.5, 0.01), labelcolor=TXT)
+    for anchor in ((0.5, 0.01), (0.5, 0.94)):
+        fig.legend(h, l, loc="lower center", ncol=7, frameon=False, fontsize=9.5,
+                   bbox_to_anchor=anchor, labelcolor=TXT)
     fig.savefig(png, dpi=150, facecolor=SURF)
     plt.close(fig)
 
 
-def draw_campus_matrix(data, years, stem, clinical_faculty, local_cpis):
+def draw_campus_matrix(data, years, stem, clinical_faculty, local_cpis, junk=None):
     """One figure: a row per location (UC systemwide + ten campuses), a column per metric."""
     y0 = years[0]
     locs = list(data.keys())
     nrow, ncol = len(locs), len(PANELS)
-    height = 3.4 * nrow + 2.6
+    height = 3.4 * nrow + 3.8
     fig, axes = plt.subplots(nrow, ncol, figsize=(17, height), facecolor=SURF)
-    top_frac = 1 - 2.0 / height
+    top_frac = 1 - 3.2 / height
     fig.subplots_adjust(hspace=0.55, wspace=0.34, left=0.05, right=0.95, top=top_frac, bottom=0.9 / height)
     for i, loc in enumerate(locs):
         for j, (key, label, fmt) in enumerate(PANELS):
             draw_panel(axes[i][j], data[loc], years, key, fmt, f"{panel_title(loc)} - {label}",
                        local_cpis.get(CPI_AREA.get(loc)), fontsize=8)
     fig.suptitle(f"Growth {y0}-{years[-1]}: UC systemwide and the ten campuses (excluding health care)",
-                 x=0.05, ha="left", fontsize=13, color=TXT, y=1 - 0.45 / height)
-    fig.text(0.05, top_frac + 0.35 / height, footnote(clinical_faculty, local_cpis, True),
+                 x=0.05, ha="left", fontsize=13, color=TXT, y=1 - 0.4 / height)
+    fig.text(0.05, top_frac + 0.75 / height, footnote(clinical_faculty, local_cpis, True, junk),
              fontsize=8.5, color=TXT2, va="bottom")
     handles, labels = best_legend(axes)
-    fig.legend(handles, labels, loc="lower center", ncol=6, frameon=False, fontsize=9.5,
-               bbox_to_anchor=(0.5, 0.15 / height), labelcolor=TXT)
+    for anchor in ((0.5, 0.15 / height), (0.5, top_frac + 0.3 / height)):
+        fig.legend(handles, labels, loc="lower center", ncol=7, frameon=False, fontsize=9.5,
+                   bbox_to_anchor=anchor, labelcolor=TXT)
     fig.savefig(stem + ".png", dpi=110, facecolor=SURF)
     fig.savefig(stem + ".pdf", facecolor=SURF)
     plt.close(fig)
@@ -249,11 +311,12 @@ def write_table(data, years, path, local_cpis):
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["location", "group", "year", "people", "total_gross_pay", "pay_per_person",
-                    "people_index", "pay_index", "pay_per_person_index", "cpi_w_ca_index", "local_cpi_index"])
+                    "people_index", "pay_index", "pay_per_person_index", "cpi_w_ca_index", "local_cpi_index",
+                    "est_fulltime_regular_pay_cutoff"])
         y0 = years[0]
         for loc, groups in data.items():
             lc = local_cpis.get(CPI_AREA.get(loc), {})
-            for name, _, _, _ in GROUPS:
+            for name in [g for g, _, _, _ in GROUPS] + ([EST_FT] if EST_FT in groups else []):
                 g = groups[name]
                 for y in years:
                     if not g["People"].get(y):
@@ -263,7 +326,8 @@ def write_table(data, years, path, local_cpis):
                                 round(100 * g["Pay"][y] / g["Pay"][y0], 1),
                                 round(100 * g["PerPerson"][y] / g["PerPerson"][y0], 1),
                                 round(100 * CPI_W_CA[y] / CPI_W_CA[y0], 1),
-                                round(100 * lc[y] / lc[y0], 1) if y in lc and y0 in lc else ""])
+                                round(100 * lc[y] / lc[y0], 1) if y in lc and y0 in lc else "",
+                                g.get("Cutoff", {}).get(y, "")])
 
 
 def main():
@@ -279,27 +343,34 @@ def main():
     years = list(range(args.start, args.end + 1))
     conn = T.connect(args.db)
     local_cpis = load_local_cpi()
+    fulltime = load_fulltime()
     os.makedirs(args.out_dir, exist_ok=True)
     suffix = "_incl_clinical" if args.clinical_faculty == "include" else ""
     if args.campuses:
-        data = fetch(conn, years, [UC] + CAMPUSES, args.clinical_faculty)
+        data = fetch(conn, years, [UC] + CAMPUSES, args.clinical_faculty, fulltime)
+        junk = count_junk_2022(conn, list(data)) if years[0] <= 2022 <= years[-1] else None
         stem = os.path.join(args.out_dir, f"growth_campuses_{args.start}_{args.end}{suffix}")
-        draw_campus_matrix(data, years, stem, args.clinical_faculty, local_cpis)
+        draw_campus_matrix(data, years, stem, args.clinical_faculty, local_cpis, junk)
         print("wrote", stem + ".png and .pdf")
     else:
-        data = fetch(conn, years, [UC, args.campus], args.clinical_faculty)
+        data = fetch(conn, years, [UC, args.campus], args.clinical_faculty, fulltime)
+        junk = count_junk_2022(conn, list(data)) if years[0] <= 2022 <= years[-1] else None
         stem = os.path.join(args.out_dir, f"growth_{args.start}_{args.end}{suffix}")
-        draw_two_locations(data, years, stem + ".png", args.clinical_faculty, local_cpis)
+        draw_two_locations(data, years, stem + ".png", args.clinical_faculty, local_cpis, junk)
         print("wrote", stem + ".png")
     write_table(data, years, stem + ".csv", local_cpis)
     print("wrote", stem + ".csv")
+    if junk:
+        print("2022 lecturer rows excluded (<$5k, not on 2023 payroll):", ", ".join(f"{k}: {v:,}" for k, v in junk.items()))
     for loc, groups in data.items():
         print(loc)
-        for name, _, _, _ in GROUPS:
+        for name in [g for g, _, _, _ in GROUPS] + ([EST_FT] if EST_FT in groups else []):
             g = groups[name]
             if g["People"].get(years[0]) and g["People"].get(years[-1]):
-                print(f"  {name:<22} people {g['People'][years[0]]:>6,} -> {g['People'][years[-1]]:>6,}"
-                      f"  pay ${g['Pay'][years[0]] / 1e6:,.0f}M -> ${g['Pay'][years[-1]] / 1e6:,.0f}M")
+                extra = (f"  regular-pay cutoff ${g['Cutoff'][years[0]]:,.0f} -> ${g['Cutoff'][years[-1]]:,.0f}"
+                         if "Cutoff" in g else "")
+                print(f"  {name:<28} people {g['People'][years[0]]:>6,} -> {g['People'][years[-1]]:>6,}"
+                      f"  pay ${g['Pay'][years[0]] / 1e6:,.0f}M -> ${g['Pay'][years[-1]] / 1e6:,.0f}M{extra}")
 
 
 if __name__ == "__main__":
