@@ -1,0 +1,6 @@
+polars>=1.0
+matplotlib
+pandas
+nbformat
+nbclient
+ipykernel

@@ -1,0 +1,31 @@
+"SHEET EXPLANATIONS:","Python Notebook Source","Misc Notes / Links"
+"All data comes from ucannualwage.ucop.edu
+
+Current data is for the year ""2020"" across campuses, the most recent complete data set avaiable, covering about 330,000 employment records.
+
+[Gross Pay] are data using the ""Gross Pay"" column
+[Regular Pay] uses the ""Regular Pay"" column **and** filters out rows where Regular Pay is 0. (Rasing the mean/median values, and lowering total counts compared to gross pay)
+
+
+There is no way for a line item to see what % of FTE time is allocated to role. Instructional titles are not separated by FY and AY values.
+
+Senta/Non-Senata titles are based on info in APMs, and on various campus websites which sometimes conflict. They exclude admins who are senate members.
+
+
+The ""CATEGORIES"" sheet, shows my very rough categorization of role types, ""Staff"" and ""admin staff"" are very loose defintions. Tab 1 ""All UC Title Codes"" contains all title codes in use in 2020 and my attempts at classifying them into role categories. Any title whichhas a blank category is not currently included in calculations. 
+
+There is an imperfect attempt at excluding medical center operations which are indeed a much different, though important, operating structure from instruction and research.","The python notebook has all the data from the past decade, though is exclusively looking at 2020 right now. 
+
+
+The data on the 'All UC Title Codes' sheet is pulled into the notebook and allow recalculating the data. (It is not autmatic).","https://pages.github.berkeley.edu/OPA/our-berkeley/teaching-activity.html
+https://cfo.berkeley.edu/sites/default/files/factors_that_impact_instructional_cost.pdf
+https://cfo.berkeley.edu/fy2019-20-budget-process 
+https://drive.google.com/drive/u/1/folders/19KHamY2cJDudZA9nQXh7D6XYzuaT0Np8 -- 2018-19 budget reports drive, the 2019-20 sheets are linked above."
+"MISC REFERENCES:","","TAS Iverview: https://cfo.berkeley.edu/sites/default/files/finance_literacy_tasandourmission_0.pdf"
+"https://ap.uci.edu/policies-procedures/app/1-20/","",""
+"Prof in Clin -- senate, but no tenure","",""
+"HEALTH SCIENCES CLINICAL PROFESSOR -- Non-Senate","https://www.apo.ucla.edu/policies-forms/the-call/professorial-series/professor-of-clinical-x-series",""
+"https://libraries.universityofcalifornia.edu/groups/files/slasiac/docs/Definitions_of_Academic_Appointees_and_Faculty.pdf","",""
+"https://www.universityofcalifornia.edu/infocenter/employee-fte","FTE %",""
+"https://accountability.universityofcalifornia.edu/glossary.html#table3","",""
+"https://tcs.ucop.edu/tcs/jsp/academicTitlesSearch.htm","",""
