@@ -7,6 +7,13 @@ replaces it, so the script is safe to re-run and can top up a single year:
 
     python3 build-db.py                # every year found in data/json
     python3 build-db.py --years 2024 2025
+    python3 build-db.py --titles-only  # just refresh the title_categories /
+                                       # title_crosswalk tables from the CSVs
+
+After the salary rows are loaded, data/title_categories.csv and
+data/title_crosswalk.csv (built by categorize-titles.py) are loaded into
+`title_categories` / `title_crosswalk` and the `salaries_categorized` view
+joins them onto `salaries`.
 
 Schema matches the one in database.ipynb: the per-year `id` from the source
 data is dropped (it is only a row number) and SQLite assigns the primary key.
@@ -20,6 +27,8 @@ import os
 import re
 import sqlite3
 import sys
+
+import uc_titles
 
 DATABASE = "data/uc_salaries.db"
 JSON_DIR = "data/json"
@@ -93,7 +102,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--years", type=int, nargs="+", default=None)
     parser.add_argument("--db", default=DATABASE)
+    parser.add_argument("--titles-only", action="store_true",
+                        help="only reload the title category tables")
     args = parser.parse_args()
+
+    if args.titles_only:
+        conn = sqlite3.connect(args.db)
+        conn.execute(SCHEMA)
+        print("Loading title tables...")
+        uc_titles.load_title_tables(conn)
+        conn.close()
+        return 0
 
     years = args.years or available_years()
     missing = [y for y in years
@@ -116,6 +135,8 @@ def main():
             "GROUP BY year ORDER BY year"):
         print(f"  {year}  {count:>7}  ${gross:>15,.0f}")
     total = conn.execute("SELECT COUNT(*) FROM salaries").fetchone()[0]
+    print("\nLoading title tables...")
+    uc_titles.load_title_tables(conn)
     conn.close()
     print(f"\n{total} total rows in {args.db} "
           f"({os.path.getsize(args.db) / 1e6:.0f} MB)")
