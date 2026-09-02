@@ -2,25 +2,37 @@
 """Growth of lecturers, teaching professors, Senate faculty and admin roles.
 
 Reads the categorized salary view (build-db.py / categorize-titles.py) and
-writes, for UC systemwide and one campus:
+plots indexed lines (start year = 100) for people, total gross pay and pay
+per person, with California CPI-W dashed for reference.
 
-  output/growth_<start>_<end>.png   indexed lines (start year = 100) for
-                                    people, total gross pay and pay per
-                                    person, with California CPI-W dashed
-  output/growth_<start>_<end>.csv   the underlying yearly numbers
+  python3 growth-chart.py                         # UC systemwide + Berkeley, 2019-2025
+  python3 growth-chart.py --start 2021            # same, 2021-2025
+  python3 growth-chart.py --start 2021 --campuses # UC systemwide + all 10 campuses,
+                                                  # one figure per metric
 
-Health-care titles and health-sciences faculty (is_health = 'Y') are
-excluded. "All admin" = Senior Management Group + Academic Administration
-+ Staff - Management.
+Outputs go to output/growth_<start>_<end>*.png / .csv.
 
-    python3 growth-chart.py                      # 2019-2025, Berkeley
-    python3 growth-chart.py --start 2020 --campus "Los Angeles"
+Definitions
+  * "All admin" = Senior Management Group + Academic Administration +
+    Staff - Management.  Health-care titles (medical centers, clinics,
+    health-system executives; is_health = 'Y') are always excluded from
+    admin and lecturers - this is a best-effort exclusion by payroll title
+    at the campuses with medical centers (Davis, Irvine, Los Angeles, San
+    Diego, San Francisco), marked with * on the charts.
+  * Senate faculty exclude HCOMP / clinical faculty (Professor-HCOMP,
+    In Residence, Of Clinical X) by default; --clinical-faculty include
+    keeps them (needed for a meaningful UCSF panel).
+  * Local inflation: a dashed purple line is drawn when
+    data/reference/cpi_local.csv has the campus's metro CPI-U annual
+    averages (columns area,year,value; areas as in CPI_AREA below, e.g. BLS
+    series CUURS49BSA0 San Francisco, CUURS49ASA0 Los Angeles, CUURS49ESA0
+    San Diego, CUURS49CSA0 Riverside). BLS publishes no index for
+    Sacramento (Davis), Santa Barbara or Merced.
 """
 
 import argparse
 import csv
 import os
-import sqlite3
 
 import matplotlib
 matplotlib.use("Agg")
@@ -28,35 +40,67 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 import uc_titles as T  # noqa: E402
 
+FACULTY_HEALTH_NOTE = {
+    "exclude": "Senate faculty and teaching professors EXCLUDE HCOMP/clinical faculty "
+               "(Professor-HCOMP, In Residence, Of Clinical X, HS Clinical).",
+    "include": "Senate faculty and teaching professors INCLUDE HCOMP/clinical faculty "
+               "(Professor-HCOMP, In Residence, Of Clinical X); HS Clinical and adjunct series are not Senate.",
+}
+
 GROUPS = [
-    # label, SQL condition on salaries_categorized, colour (validated categorical palette)
-    ("Lecturers (Unit 18)", f"category = '{T.LECT}'", "#2a78d6"),
-    ("Teaching professors", f"category = '{T.SEN}' AND secondary_category LIKE 'Teaching Professor%'", "#eb6834"),
+    # label, SQL condition, colour (validated categorical palette), is_faculty
+    ("Lecturers (Unit 18)", f"category = '{T.LECT}'", "#2a78d6", False),
+    ("Teaching professors", f"category = '{T.SEN}' AND secondary_category LIKE 'Teaching Professor%'", "#eb6834", True),
     ("Senate faculty", f"category = '{T.SEN}' AND secondary_category NOT LIKE 'Teaching Professor%' "
-                       "AND secondary_category NOT LIKE 'Recall%' AND secondary_category NOT LIKE 'Emeritus%'", "#1baf7a"),
-    ("All admin", f"category IN ('{T.SMG}', '{T.ACADMIN}', '{T.MGMT}')", "#eda100"),
+                       "AND secondary_category NOT LIKE 'Recall%' AND secondary_category NOT LIKE 'Emeritus%'", "#1baf7a", True),
+    ("All admin", f"category IN ('{T.SMG}', '{T.ACADMIN}', '{T.MGMT}')", "#eda100", False),
 ]
 
-# California CPI-W, annual average (from the UC Accountability Report glossary).
-CPI_W_CA = {2010: 224.7, 2011: 230.5, 2012: 235.6, 2013: 238.9, 2014: 243.4, 2015: 246.2,
-            2016: 251.3, 2017: 258.4, 2018: 267.5, 2019: 270.8, 2020: 275.6, 2021: 288.6,
+# California CPI-W, calendar-year average (UC Accountability Report glossary, Table 5).
+CPI_W_CA = {2010: 219.7, 2011: 226.4, 2012: 231.6, 2013: 234.9, 2014: 239.0, 2015: 241.6,
+            2016: 246.2, 2017: 253.2, 2018: 263.0, 2019: 270.8, 2020: 275.6, 2021: 288.6,
             2022: 310.4, 2023: 321.2, 2024: 330.7, 2025: 341.0}
 
-SURF, TXT, TXT2, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e2"
+CAMPUSES = ["Berkeley", "Davis", "Irvine", "Los Angeles", "Merced", "Riverside",
+            "San Diego", "San Francisco", "Santa Barbara", "Santa Cruz"]
+MED_CENTER_CAMPUSES = {"Davis", "Irvine", "Los Angeles", "San Diego", "San Francisco"}
+CPI_AREA = {  # campus -> BLS metro CPI-U area (nearest published index)
+    "Berkeley": "San Francisco-Oakland-Hayward", "San Francisco": "San Francisco-Oakland-Hayward",
+    "Santa Cruz": "San Francisco-Oakland-Hayward", "Los Angeles": "Los Angeles-Long Beach-Anaheim",
+    "Irvine": "Los Angeles-Long Beach-Anaheim", "San Diego": "San Diego-Carlsbad",
+    "Riverside": "Riverside-San Bernardino-Ontario",
+}
+LOCAL_CPI_CSV = "data/reference/cpi_local.csv"
+UC = "UC systemwide"
+
+SURF, TXT, TXT2, GRID, LOCAL = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e2", "#7b3fbf"
+MIN_BASE = 25  # series with fewer people than this in the start year are not drawn
 
 
-def fetch(conn, years, campus=None):
+def load_local_cpi():
+    out = {}
+    if os.path.exists(LOCAL_CPI_CSV):
+        for r in T.read_csv(LOCAL_CPI_CSV):
+            try:
+                out.setdefault(r["area"], {})[int(r["year"])] = float(r["value"])
+            except (KeyError, ValueError):
+                continue
+    return out
+
+
+def fetch(conn, years, locations, clinical_faculty="exclude"):
     """{location: {group: {'People': {year: n}, 'Pay': {...}, 'PerPerson': {...}}}}"""
     out = {}
-    for loc in ["UC systemwide", campus]:
-        where_loc = "" if loc == "UC systemwide" else "AND location = ?"
+    for loc in locations:
+        where_loc = "" if loc == UC else "AND location = ?"
         out[loc] = {}
-        for name, cond, _ in GROUPS:
-            params = (years[0], years[-1]) + (() if loc == "UC systemwide" else (loc,))
+        for name, cond, _, is_faculty in GROUPS:
+            health = "" if (is_faculty and clinical_faculty == "include") else "AND is_health = 'N'"
+            params = (years[0], years[-1]) + (() if loc == UC else (loc,))
             rows = conn.execute(
                 f"SELECT year, COUNT(*), SUM(gross_pay) FROM salaries_categorized "
-                f"WHERE year BETWEEN ? AND ? AND is_health = 'N' AND ({cond}) {where_loc} "
-                f"GROUP BY year", params).fetchall()
+                f"WHERE year BETWEEN ? AND ? {health} AND ({cond}) {where_loc} GROUP BY year",
+                params).fetchall()
             n = {y: a for y, a, b in rows}
             p = {y: b for y, a, b in rows}
             out[loc][name] = {"People": n, "Pay": p,
@@ -72,76 +116,148 @@ def fmt_money(v):
     return f"${v / 1e6:,.0f}M" if v >= 1e6 else f"${v / 1e3:,.0f}k"
 
 
-def draw(data, years, png):
-    panels = [("People", "People (payroll rows)", fmt_people),
-              ("Pay", "Total gross pay", fmt_money),
-              ("PerPerson", "Pay per person (total pay / people)", fmt_money)]
+PANELS = [("People", "People (payroll rows)", fmt_people),
+          ("Pay", "Total gross pay", fmt_money),
+          ("PerPerson", "Pay per person (total pay / people)", fmt_money)]
+
+
+def panel_title(loc):
+    return f"{loc}*" if loc in MED_CENTER_CAMPUSES else loc
+
+
+def draw_panel(ax, groups, years, key, fmt, title, local_cpi=None, fontsize=8.5):
     y0, y1 = years[0], years[-1]
-    fig, axes = plt.subplots(2, 3, figsize=(16, 9), facecolor=SURF)
-    fig.subplots_adjust(hspace=0.42, wspace=0.32, left=0.05, right=0.945, top=0.86, bottom=0.1)
+    ax.set_facecolor(SURF)
+    ends = []
+    if key != "People":
+        cpi = [100 * CPI_W_CA[y] / CPI_W_CA[y0] for y in years]
+        ax.plot(years, cpi, color=TXT2, lw=1.5, ls=(0, (4, 3)), label="Inflation (CA CPI-W)")
+        ends.append([cpi[-1], f"CA CPI +{cpi[-1] - 100:.0f}%"])
+        if local_cpi and all(y in local_cpi for y in years):
+            lc = [100 * local_cpi[y] / local_cpi[y0] for y in years]
+            ax.plot(years, lc, color=LOCAL, lw=1.5, ls=(0, (4, 3)), label="Local inflation (metro CPI-U)")
+            ends.append([lc[-1], f"local CPI +{lc[-1] - 100:.0f}%"])
+    small = []
+    for name, _, col, _ in GROUPS:
+        d = groups[name][key]
+        if not all(d.get(y) for y in years) or groups[name]["People"][y0] < MIN_BASE:
+            small.append(name)
+            continue
+        idx = [100 * d[y] / d[y0] for y in years]
+        ax.plot(years, idx, color=col, lw=2, solid_joinstyle="round", solid_capstyle="round", label=name)
+        ax.plot(years[-1], idx[-1], "o", ms=7, color=col, mec=SURF, mew=2)
+        ends.append([idx[-1], f"{fmt(d[y1])} ({idx[-1] - 100:+.0f}%)"])
+    if small:
+        ax.text(0.0, -0.2, "not shown (fewer than %d people in %d): %s" % (MIN_BASE, y0, ", ".join(small)),
+                transform=ax.transAxes, fontsize=fontsize - 1, color=TXT2, va="top")
+    ymin, ymax = ax.get_ylim()
+    gap = (ymax - ymin) * 0.07
+    ends.sort(key=lambda e: e[0])
+    pos = [e[0] for e in ends]
+    for k in range(1, len(pos)):
+        if pos[k] - pos[k - 1] < gap:
+            pos[k] = pos[k - 1] + gap
+    # keep the label stack inside the axes
+    if pos and pos[-1] > ymax - 0.3 * gap:
+        shift = pos[-1] - (ymax - 0.3 * gap)
+        pos = [p - shift for p in pos]
+    for (y, txt), p in zip(ends, pos):
+        ax.annotate(txt, (years[-1], y), xytext=(8, (p - y) / (ymax - ymin) * ax.bbox.height * 0.99),
+                    textcoords="offset points", va="center", fontsize=fontsize, color=TXT)
+    ax.axhline(100, color=GRID, lw=1, zorder=0)
+    ax.set_title(title, loc="left", fontsize=fontsize + 2, color=TXT, pad=6)
+    ax.set_xticks(years)
+    ax.tick_params(colors=TXT2, labelsize=fontsize, length=0)
+    for s in ("top", "right", "left"):
+        ax.spines[s].set_visible(False)
+    ax.spines["bottom"].set_color(GRID)
+    ax.grid(axis="y", color=GRID, lw=1)
+    ax.set_axisbelow(True)
+    ax.set_ylabel(f"Index, {y0} = 100", color=TXT2, fontsize=fontsize)
+    ax.set_xlim(y0 - 0.2, y1 + 1.0 + 0.25 * (y1 - y0 < 5))
+
+
+def footnote(clinical_faculty, local_cpi, with_asterisk):
+    lines = ["Source: ucannualwage.ucop.edu payroll rows, gross pay; categories from data/title_categories.csv. "
+             "Admin = SMG + academic administration + staff management; health-care titles excluded. "
+             "End labels: last-year value and change since the start year."]
+    if with_asterisk:
+        lines.append("* Campus with a medical center: medical-center staff and health-system executives are "
+                     "excluded by payroll title (best effort; see docs/title-categories.md).")
+    lines.append(FACULTY_HEALTH_NOTE[clinical_faculty])
+    if with_asterisk:
+        lines.append("CA CPI-W (Dept. of Finance) is dashed gray. Local metro CPI-U is dashed purple when "
+                     "data/reference/cpi_local.csv has it" + (" (not loaded)." if not local_cpi else "."))
+    return "\n".join(lines)
+
+
+def draw_two_locations(data, years, png, clinical_faculty, local_cpis):
+    y0 = years[0]
+    fig, axes = plt.subplots(2, 3, figsize=(16, 9.4), facecolor=SURF)
+    fig.subplots_adjust(hspace=0.45, wspace=0.32, left=0.05, right=0.945, top=0.85, bottom=0.13)
     for i, (loc, groups) in enumerate(data.items()):
-        for j, (key, label, fmt) in enumerate(panels):
-            ax = axes[i][j]
-            ax.set_facecolor(SURF)
-            ends = []
-            if key != "People":
-                cpi = [100 * CPI_W_CA[y] / CPI_W_CA[y0] for y in years]
-                ax.plot(years, cpi, color=TXT2, lw=1.5, ls=(0, (4, 3)), label="Inflation (CA CPI-W)")
-                ends.append([cpi[-1], f"CPI +{cpi[-1] - 100:.0f}%"])
-            for name, _, col in GROUPS:
-                d = groups[name][key]
-                idx = [100 * d[y] / d[y0] for y in years]
-                ax.plot(years, idx, color=col, lw=2, solid_joinstyle="round", solid_capstyle="round", label=name)
-                ax.plot(years[-1], idx[-1], "o", ms=8, color=col, mec=SURF, mew=2)
-                ends.append([idx[-1], f"{fmt(d[y1])} ({idx[-1] - 100:+.0f}%)"])
-            # push overlapping end labels apart
-            ymin, ymax = ax.get_ylim()
-            gap = (ymax - ymin) * 0.06
-            ends.sort(key=lambda e: e[0])
-            pos = [e[0] for e in ends]
-            for k in range(1, len(pos)):
-                if pos[k] - pos[k - 1] < gap:
-                    pos[k] = pos[k - 1] + gap
-            for (y, txt), p in zip(ends, pos):
-                ax.annotate(txt, (years[-1], y), xytext=(9, (p - y) / (ymax - ymin) * ax.bbox.height * 0.99),
-                            textcoords="offset points", va="center", fontsize=8.5, color=TXT)
-            ax.axhline(100, color=GRID, lw=1, zorder=0)
-            ax.set_title(f"{loc} - {label}", loc="left", fontsize=10.5, color=TXT, pad=8)
-            ax.set_xticks(years)
-            ax.tick_params(colors=TXT2, labelsize=8.5, length=0)
-            for s in ("top", "right", "left"):
-                ax.spines[s].set_visible(False)
-            ax.spines["bottom"].set_color(GRID)
-            ax.grid(axis="y", color=GRID, lw=1)
-            ax.set_axisbelow(True)
-            ax.set_ylabel(f"Index, {y0} = 100", color=TXT2, fontsize=8.5)
-            ax.set_xlim(y0 - 0.2, y1 + 1.0)
+        for j, (key, label, fmt) in enumerate(PANELS):
+            draw_panel(axes[i][j], groups, years, key, fmt, f"{panel_title(loc)} - {label}",
+                       local_cpis.get(CPI_AREA.get(loc)))
     fig.suptitle(f"Growth since {y0}: lecturers, teaching professors, Senate faculty, admin (excluding health care)",
                  x=0.05, ha="left", fontsize=13, color=TXT, y=0.965)
-    fig.text(0.05, 0.915, "Source: ucannualwage.ucop.edu payroll rows, gross pay; categories from "
-             "data/title_categories.csv. Admin = SMG + academic admin + staff management. "
-             f"End labels: {y1} value and change since {y0}.", fontsize=8.5, color=TXT2)
+    fig.text(0.05, 0.88, footnote(clinical_faculty, local_cpis, any(l in MED_CENTER_CAMPUSES for l in data)),
+             fontsize=8.5, color=TXT2, va="bottom")
     h, l = axes[0][1].get_legend_handles_labels()
-    fig.legend(h, l, loc="lower center", ncol=5, frameon=False, fontsize=9.5,
-               bbox_to_anchor=(0.5, 0.005), labelcolor=TXT)
+    fig.legend(h, l, loc="lower center", ncol=6, frameon=False, fontsize=9.5,
+               bbox_to_anchor=(0.5, 0.01), labelcolor=TXT)
     fig.savefig(png, dpi=150, facecolor=SURF)
+    plt.close(fig)
 
 
-def write_table(data, years, path):
+def draw_campus_grid(data, years, key, label, fmt, png, clinical_faculty, local_cpis):
+    y0 = years[0]
+    locs = list(data.keys())
+    ncol, nrow = 3, 4
+    fig, axes = plt.subplots(nrow, ncol, figsize=(16, 17), facecolor=SURF)
+    fig.subplots_adjust(hspace=0.5, wspace=0.35, left=0.05, right=0.95, top=0.905, bottom=0.07)
+    for k, ax in enumerate(axes.flat):
+        if k >= len(locs):
+            ax.set_visible(False)
+            continue
+        loc = locs[k]
+        draw_panel(ax, data[loc], years, key, fmt, panel_title(loc), local_cpis.get(CPI_AREA.get(loc)), fontsize=8)
+    fig.suptitle(f"{label}, {y0}-{years[-1]}: UC systemwide and the ten campuses (excluding health care)",
+                 x=0.05, ha="left", fontsize=13, color=TXT, y=0.975)
+    fig.text(0.05, 0.925, footnote(clinical_faculty, local_cpis, True), fontsize=8.5, color=TXT2, va="bottom")
+    handles, labels = None, None
+    for ax in axes.flat:
+        h, l = ax.get_legend_handles_labels()
+        if len(l) >= (6 if local_cpis else 5):
+            handles, labels = h, l
+            break
+        if handles is None or len(l) > len(labels):
+            handles, labels = h, l
+    fig.legend(handles, labels, loc="lower center", ncol=6, frameon=False, fontsize=9.5,
+               bbox_to_anchor=(0.5, 0.01), labelcolor=TXT)
+    fig.savefig(png, dpi=150, facecolor=SURF)
+    plt.close(fig)
+
+
+def write_table(data, years, path, local_cpis):
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["location", "group", "year", "people", "total_gross_pay", "pay_per_person",
-                    "people_index", "pay_index", "pay_per_person_index", "cpi_w_ca_index"])
+                    "people_index", "pay_index", "pay_per_person_index", "cpi_w_ca_index", "local_cpi_index"])
         y0 = years[0]
         for loc, groups in data.items():
-            for name, _, _ in GROUPS:
+            lc = local_cpis.get(CPI_AREA.get(loc), {})
+            for name, _, _, _ in GROUPS:
                 g = groups[name]
                 for y in years:
+                    if not g["People"].get(y):
+                        continue
                     w.writerow([loc, name, y, g["People"][y], round(g["Pay"][y]), round(g["PerPerson"][y]),
                                 round(100 * g["People"][y] / g["People"][y0], 1),
                                 round(100 * g["Pay"][y] / g["Pay"][y0], 1),
                                 round(100 * g["PerPerson"][y] / g["PerPerson"][y0], 1),
-                                round(100 * CPI_W_CA[y] / CPI_W_CA[y0], 1)])
+                                round(100 * CPI_W_CA[y] / CPI_W_CA[y0], 1),
+                                round(100 * lc[y] / lc[y0], 1) if y in lc and y0 in lc else ""])
 
 
 def main():
@@ -149,23 +265,37 @@ def main():
     ap.add_argument("--start", type=int, default=2019)
     ap.add_argument("--end", type=int, default=2025)
     ap.add_argument("--campus", default="Berkeley")
+    ap.add_argument("--campuses", action="store_true", help="UC systemwide + all ten campuses, one figure per metric")
+    ap.add_argument("--clinical-faculty", choices=["exclude", "include"], default="exclude")
     ap.add_argument("--db", default=T.DATABASE)
     ap.add_argument("--out-dir", default="output")
     args = ap.parse_args()
     years = list(range(args.start, args.end + 1))
     conn = T.connect(args.db)
-    data = fetch(conn, years, args.campus)
+    local_cpis = load_local_cpi()
     os.makedirs(args.out_dir, exist_ok=True)
-    stem = os.path.join(args.out_dir, f"growth_{args.start}_{args.end}")
-    draw(data, years, stem + ".png")
-    write_table(data, years, stem + ".csv")
+    suffix = "_incl_clinical" if args.clinical_faculty == "include" else ""
+    if args.campuses:
+        data = fetch(conn, years, [UC] + CAMPUSES, args.clinical_faculty)
+        stem = os.path.join(args.out_dir, f"growth_campuses_{args.start}_{args.end}{suffix}")
+        for key, label, fmt in PANELS:
+            png = f"{stem}_{key.lower()}.png"
+            draw_campus_grid(data, years, key, label, fmt, png, args.clinical_faculty, local_cpis)
+            print("wrote", png)
+    else:
+        data = fetch(conn, years, [UC, args.campus], args.clinical_faculty)
+        stem = os.path.join(args.out_dir, f"growth_{args.start}_{args.end}{suffix}")
+        draw_two_locations(data, years, stem + ".png", args.clinical_faculty, local_cpis)
+        print("wrote", stem + ".png")
+    write_table(data, years, stem + ".csv", local_cpis)
+    print("wrote", stem + ".csv")
     for loc, groups in data.items():
         print(loc)
-        for name, _, _ in GROUPS:
+        for name, _, _, _ in GROUPS:
             g = groups[name]
-            print(f"  {name:<22} people {g['People'][years[0]]:>6,} -> {g['People'][years[-1]]:>6,}"
-                  f"  pay ${g['Pay'][years[0]] / 1e6:,.0f}M -> ${g['Pay'][years[-1]] / 1e6:,.0f}M")
-    print(f"wrote {stem}.png and {stem}.csv")
+            if g["People"].get(years[0]) and g["People"].get(years[-1]):
+                print(f"  {name:<22} people {g['People'][years[0]]:>6,} -> {g['People'][years[-1]]:>6,}"
+                      f"  pay ${g['Pay'][years[0]] / 1e6:,.0f}M -> ${g['Pay'][years[-1]] / 1e6:,.0f}M")
 
 
 if __name__ == "__main__":
