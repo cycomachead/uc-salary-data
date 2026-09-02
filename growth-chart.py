@@ -7,8 +7,8 @@ per person, with California CPI-W dashed for reference.
 
   python3 growth-chart.py                         # UC systemwide + Berkeley, 2019-2025
   python3 growth-chart.py --start 2021            # same, 2021-2025
-  python3 growth-chart.py --start 2021 --campuses # UC systemwide + all 10 campuses,
-                                                  # one figure per metric
+  python3 growth-chart.py --start 2021 --campuses # UC systemwide + all 10 campuses:
+                                                  # one row per location, PNG + PDF
 
 Outputs go to output/growth_<start>_<end>*.png / .csv.
 
@@ -191,6 +191,16 @@ def footnote(clinical_faculty, local_cpi, with_asterisk):
     return "\n".join(lines)
 
 
+def best_legend(axes):
+    """Handles/labels from the panel with the most series (so local CPI is included when drawn)."""
+    best = ([], [])
+    for ax in axes.flat:
+        h, l = ax.get_legend_handles_labels()
+        if len(l) > len(best[1]):
+            best = (h, l)
+    return best
+
+
 def draw_two_locations(data, years, png, clinical_faculty, local_cpis):
     y0 = years[0]
     fig, axes = plt.subplots(2, 3, figsize=(16, 9.4), facecolor=SURF)
@@ -203,39 +213,35 @@ def draw_two_locations(data, years, png, clinical_faculty, local_cpis):
                  x=0.05, ha="left", fontsize=13, color=TXT, y=0.965)
     fig.text(0.05, 0.88, footnote(clinical_faculty, local_cpis, any(l in MED_CENTER_CAMPUSES for l in data)),
              fontsize=8.5, color=TXT2, va="bottom")
-    h, l = axes[0][1].get_legend_handles_labels()
+    h, l = best_legend(axes)
     fig.legend(h, l, loc="lower center", ncol=6, frameon=False, fontsize=9.5,
                bbox_to_anchor=(0.5, 0.01), labelcolor=TXT)
     fig.savefig(png, dpi=150, facecolor=SURF)
     plt.close(fig)
 
 
-def draw_campus_grid(data, years, key, label, fmt, png, clinical_faculty, local_cpis):
+def draw_campus_matrix(data, years, stem, clinical_faculty, local_cpis):
+    """One figure: a row per location (UC systemwide + ten campuses), a column per metric."""
     y0 = years[0]
     locs = list(data.keys())
-    ncol, nrow = 3, 4
-    fig, axes = plt.subplots(nrow, ncol, figsize=(16, 17), facecolor=SURF)
-    fig.subplots_adjust(hspace=0.5, wspace=0.35, left=0.05, right=0.95, top=0.905, bottom=0.07)
-    for k, ax in enumerate(axes.flat):
-        if k >= len(locs):
-            ax.set_visible(False)
-            continue
-        loc = locs[k]
-        draw_panel(ax, data[loc], years, key, fmt, panel_title(loc), local_cpis.get(CPI_AREA.get(loc)), fontsize=8)
-    fig.suptitle(f"{label}, {y0}-{years[-1]}: UC systemwide and the ten campuses (excluding health care)",
-                 x=0.05, ha="left", fontsize=13, color=TXT, y=0.975)
-    fig.text(0.05, 0.925, footnote(clinical_faculty, local_cpis, True), fontsize=8.5, color=TXT2, va="bottom")
-    handles, labels = None, None
-    for ax in axes.flat:
-        h, l = ax.get_legend_handles_labels()
-        if len(l) >= (6 if local_cpis else 5):
-            handles, labels = h, l
-            break
-        if handles is None or len(l) > len(labels):
-            handles, labels = h, l
+    nrow, ncol = len(locs), len(PANELS)
+    height = 3.4 * nrow + 2.6
+    fig, axes = plt.subplots(nrow, ncol, figsize=(17, height), facecolor=SURF)
+    top_frac = 1 - 2.0 / height
+    fig.subplots_adjust(hspace=0.55, wspace=0.34, left=0.05, right=0.95, top=top_frac, bottom=0.9 / height)
+    for i, loc in enumerate(locs):
+        for j, (key, label, fmt) in enumerate(PANELS):
+            draw_panel(axes[i][j], data[loc], years, key, fmt, f"{panel_title(loc)} - {label}",
+                       local_cpis.get(CPI_AREA.get(loc)), fontsize=8)
+    fig.suptitle(f"Growth {y0}-{years[-1]}: UC systemwide and the ten campuses (excluding health care)",
+                 x=0.05, ha="left", fontsize=13, color=TXT, y=1 - 0.45 / height)
+    fig.text(0.05, top_frac + 0.35 / height, footnote(clinical_faculty, local_cpis, True),
+             fontsize=8.5, color=TXT2, va="bottom")
+    handles, labels = best_legend(axes)
     fig.legend(handles, labels, loc="lower center", ncol=6, frameon=False, fontsize=9.5,
-               bbox_to_anchor=(0.5, 0.01), labelcolor=TXT)
-    fig.savefig(png, dpi=150, facecolor=SURF)
+               bbox_to_anchor=(0.5, 0.15 / height), labelcolor=TXT)
+    fig.savefig(stem + ".png", dpi=110, facecolor=SURF)
+    fig.savefig(stem + ".pdf", facecolor=SURF)
     plt.close(fig)
 
 
@@ -278,10 +284,8 @@ def main():
     if args.campuses:
         data = fetch(conn, years, [UC] + CAMPUSES, args.clinical_faculty)
         stem = os.path.join(args.out_dir, f"growth_campuses_{args.start}_{args.end}{suffix}")
-        for key, label, fmt in PANELS:
-            png = f"{stem}_{key.lower()}.png"
-            draw_campus_grid(data, years, key, label, fmt, png, args.clinical_faculty, local_cpis)
-            print("wrote", png)
+        draw_campus_matrix(data, years, stem, args.clinical_faculty, local_cpis)
+        print("wrote", stem + ".png and .pdf")
     else:
         data = fetch(conn, years, [UC, args.campus], args.clinical_faculty)
         stem = os.path.join(args.out_dir, f"growth_{args.start}_{args.end}{suffix}")
