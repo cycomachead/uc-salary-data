@@ -1,11 +1,56 @@
 location,year,as_of_month,fulltime_lecturers,source
-Berkeley,2021,October,347,"UC employee headcount dashboard, Full Time filter, Faculty - Lecturers; exported by M. Ball 2026-09-02"
-Berkeley,2022,October,316,"UC employee headcount dashboard, Full Time filter, Faculty - Lecturers; exported by M. Ball 2026-09-02"
-Berkeley,2023,October,327,"UC employee headcount dashboard, Full Time filter, Faculty - Lecturers; exported by M. Ball 2026-09-02"
-Berkeley,2024,October,322,"UC employee headcount dashboard, Full Time filter, Faculty - Lecturers; exported by M. Ball 2026-09-02"
-Berkeley,2025,October,338,"UC employee headcount dashboard, Full Time filter, Faculty - Lecturers; exported by M. Ball 2026-09-02"
 UC systemwide,2021,October,1866,"UC employee headcount dashboard, Full Time filter, Faculty - Lecturers; exported by M. Ball 2026-09-02"
 UC systemwide,2022,October,1690,"UC employee headcount dashboard, Full Time filter, Faculty - Lecturers; exported by M. Ball 2026-09-02"
 UC systemwide,2023,October,1762,"UC employee headcount dashboard, Full Time filter, Faculty - Lecturers; exported by M. Ball 2026-09-02"
 UC systemwide,2024,October,1755,"UC employee headcount dashboard, Full Time filter, Faculty - Lecturers; exported by M. Ball 2026-09-02"
 UC systemwide,2025,October,1726,"UC employee headcount dashboard, Full Time filter, Faculty - Lecturers; exported by M. Ball 2026-09-02"
+Berkeley,2021,October,347,"UC employee headcount dashboard, Full Time filter, Faculty - Lecturers; exported by M. Ball 2026-09-02"
+Berkeley,2022,October,316,"UC employee headcount dashboard, Full Time filter, Faculty - Lecturers; exported by M. Ball 2026-09-02"
+Berkeley,2023,October,327,"UC employee headcount dashboard, Full Time filter, Faculty - Lecturers; exported by M. Ball 2026-09-02"
+Berkeley,2024,October,322,"UC employee headcount dashboard, Full Time filter, Faculty - Lecturers; exported by M. Ball 2026-09-02"
+Berkeley,2025,October,338,"UC employee headcount dashboard, Full Time filter, Faculty - Lecturers; exported by M. Ball 2026-09-02"
+Davis,2021,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Davis,2022,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Davis,2023,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Davis,2024,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Davis,2025,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Irvine,2021,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Irvine,2022,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Irvine,2023,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Irvine,2024,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Irvine,2025,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Los Angeles,2021,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Los Angeles,2022,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Los Angeles,2023,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Los Angeles,2024,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Los Angeles,2025,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Merced,2021,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Merced,2022,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Merced,2023,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Merced,2024,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Merced,2025,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Riverside,2021,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Riverside,2022,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Riverside,2023,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Riverside,2024,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Riverside,2025,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+San Diego,2021,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+San Diego,2022,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+San Diego,2023,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+San Diego,2024,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+San Diego,2025,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+San Francisco,2021,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+San Francisco,2022,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+San Francisco,2023,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+San Francisco,2024,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+San Francisco,2025,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Santa Barbara,2021,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Santa Barbara,2022,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Santa Barbara,2023,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Santa Barbara,2024,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Santa Barbara,2025,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Santa Cruz,2021,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Santa Cruz,2022,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Santa Cruz,2023,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Santa Cruz,2024,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters
+Santa Cruz,2025,October,,TODO: export from the UC employee headcount dashboard with Full Time + campus filters

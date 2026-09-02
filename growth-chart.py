@@ -139,7 +139,8 @@ def load_fulltime():
     out = {}
     if os.path.exists(FULLTIME_CSV):
         for r in T.read_csv(FULLTIME_CSV):
-            out.setdefault(r["location"], {})[int(r["year"])] = int(r["fulltime_lecturers"])
+            if r["fulltime_lecturers"].strip():   # blank = not yet exported for that campus/year
+                out.setdefault(r["location"], {})[int(r["year"])] = int(r["fulltime_lecturers"])
     return out
 
 
